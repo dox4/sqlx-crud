@@ -5,11 +5,14 @@ use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{
-    parse_macro_input, Attribute, Data, DataStruct, DeriveInput, Expr, Field, Fields, FieldsNamed, Ident,
-    LitStr, Meta, MetaNameValue, Lit, ExprLit,
+    parse_macro_input, Attribute, Data, DataStruct, DeriveInput, Field, Fields, FieldsNamed, Ident,
+    LitStr, Token,
 };
 
-#[proc_macro_derive(SqlxCrud, attributes(database, external_id, id))]
+#[proc_macro_derive(
+    SqlxCrud,
+    attributes(database, external_id, id, ignore_when, auto_increment, deleted_flag,)
+)]
 pub fn derive(input: TokenStream) -> TokenStream {
     let DeriveInput {
         ident, data, attrs, ..
@@ -67,56 +70,14 @@ fn build_sql_queries(config: &Config) -> TokenStream2 {
         config.quote_ident(&config.id_column_ident.to_string())
     );
 
-    let insert_bind_cnt = if config.external_id {
-        config.named.iter().count()
-    } else {
-        config.named.iter().count() - 1
-    };
-    let insert_sql_binds = (0..insert_bind_cnt)
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let update_sql_binds = config
-        .named
-        .iter()
-        .flat_map(|f| &f.ident)
-        .filter(|i| *i != &config.id_column_ident)
-        .map(|i| format!("{} = ?", config.quote_ident(&i.to_string())))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let insert_column_list = config
-        .named
-        .iter()
-        .flat_map(|f| &f.ident)
-        .filter(|i| config.external_id || *i != &config.id_column_ident)
-        .map(|i| config.quote_ident(&i.to_string()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let column_list = config
-        .named
-        .iter()
-        .flat_map(|f| &f.ident)
-        .map(|i| format!("{}.{}", &table_name, config.quote_ident(&i.to_string())))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let select_sql = format!("SELECT {} FROM {}", column_list, table_name);
-    let select_by_id_sql = format!(
-        "SELECT {} FROM {} WHERE {} = ? LIMIT 1",
-        column_list, table_name, id_column
-    );
-    let insert_sql = format!(
-        "INSERT INTO {} ({}) VALUES ({}) RETURNING {}",
-        table_name, insert_column_list, insert_sql_binds, column_list
-    );
-    let update_by_id_sql = format!(
-        "UPDATE {} SET {} WHERE {} = ? RETURNING {}",
-        table_name, update_sql_binds, id_column, column_list
-    );
-    let delete_by_id_sql = format!("DELETE FROM {} WHERE {} = ?", table_name, id_column);
-
+    // build select sql
+    let (select_sql, select_by_id_sql) = build_select_sql(config, &table_name, &id_column);
+    // build insert sql
+    let insert_sql = build_insert_sql(config, &table_name);
+    // build update sql
+    let update_by_id_sql = build_update_sql(config, &table_name, &id_column);
+    // build delete sql
+    let delete_by_id_sql = build_delete_sql(config, &table_name, &id_column);
     quote! {
         select_sql: #select_sql,
         select_by_id_sql: #select_by_id_sql,
@@ -124,6 +85,90 @@ fn build_sql_queries(config: &Config) -> TokenStream2 {
         update_by_id_sql: #update_by_id_sql,
         delete_by_id_sql: #delete_by_id_sql,
     }
+}
+
+fn build_select_sql(config: &Config, table_name: &String, id_column: &String) -> (String, String) {
+    let column_list = config
+        .named
+        .iter()
+        .flat_map(|f| &f.ident)
+        .map(|i| format!("{}.{}", &table_name, config.quote_ident(&i.to_string())))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match config.delete_ident() {
+        Some(ident) => {
+            let select_sql = format!(
+                "SELECT {} FROM {} WHERE {} IS NULL",
+                column_list,
+                table_name,
+                config.quote_ident(ident.as_str())
+            );
+            let select_by_id_sql = format!(
+                "SELECT {} FROM {} WHERE {} = ? AND {} IS NULL LIMIT 1",
+                column_list,
+                table_name,
+                id_column,
+                config.quote_ident(ident.as_str())
+            );
+            (select_sql, select_by_id_sql)
+        }
+        None => {
+            let select_sql = format!("SELECT {} FROM {}", column_list, table_name);
+            let select_by_id_sql = format!(
+                "SELECT {} FROM {} WHERE {} = ? LIMIT 1",
+                column_list, table_name, id_column
+            );
+            (select_sql, select_by_id_sql)
+        }
+    }
+}
+
+fn build_insert_sql(config: &Config, table_name: &String) -> String {
+    let insert_bind_cnt = config.insert_fields.len();
+    let insert_sql_binds = (0..insert_bind_cnt)
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
+    let insert_column_list = config
+        .insert_fields
+        .iter()
+        .flat_map(|f| &f.ident)
+        // .filter(|i| config.external_id || *i != &config.id_column_ident)
+        .map(|i| config.quote_ident(&i.to_string()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "INSERT INTO {} ({}) VALUES ({})",
+        table_name, insert_column_list, insert_sql_binds
+    )
+}
+
+fn build_update_sql(config: &Config, table_name: &String, id_column: &String) -> String {
+    let update_sql_binds = config
+        .update_fields
+        .iter()
+        .flat_map(|f| &f.ident)
+        .filter(|i| *i != &config.id_column_ident)
+        .map(|i| format!("{} = ?", config.quote_ident(&i.to_string())))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    match config.delete_ident() {
+        Some(field) => format!(
+            "UPDATE {} SET {} WHERE {} = ? AND {} IS NULL",
+            table_name,
+            update_sql_binds,
+            id_column,
+            config.quote_ident(field.as_str())
+        ),
+        None => format!(
+            "UPDATE {} SET {} WHERE {} = ?",
+            table_name, update_sql_binds, id_column
+        ),
+    }
+}
+fn build_delete_sql(_config: &Config, table_name: &String, id_column: &String) -> String {
+    format!("DELETE FROM {} WHERE {} = ?", table_name, id_column)
 }
 
 fn build_sqlx_crud_impl(config: &Config) -> TokenStream2 {
@@ -141,30 +186,30 @@ fn build_sqlx_crud_impl(config: &Config) -> TokenStream2 {
         .expect("the id type");
 
     let insert_query_args = config
-        .named
+        .insert_fields
         .iter()
         .flat_map(|f| &f.ident)
-        .filter(|i| config.external_id || *i != &config.id_column_ident)
+        // .filter(|i| config.external_id || *i != &config.id_column_ident)
         .map(|i| quote! { args.add(self.#i); });
 
     let insert_query_size = config
-        .named
+        .insert_fields
         .iter()
         .flat_map(|f| &f.ident)
-        .filter(|i| config.external_id || *i != &config.id_column_ident)
+        // .filter(|i| config.external_id || *i != &config.id_column_ident)
         .map(|i| quote! { ::sqlx::encode::Encode::<#db_ty>::size_hint(&self.#i) });
 
     let update_query_args = config
-        .named
+        .update_fields
         .iter()
         .flat_map(|f| &f.ident)
-        .filter(|i| *i != &config.id_column_ident)
+        // .filter(|i| *i != &config.id_column_ident)
         .map(|i| quote! { args.add(self.#i); });
 
     let update_query_args_id = quote! { args.add(self.#id_column_ident); };
 
     let update_query_size = config
-        .named
+        .update_fields
         .iter()
         .flat_map(|f| &f.ident)
         .map(|i| quote! { ::sqlx::encode::Encode::<#db_ty>::size_hint(&self.#i) });
@@ -243,6 +288,10 @@ struct Config<'a> {
     table_name: String,
     id_column_ident: Ident,
     external_id: bool,
+    // additional fields
+    update_fields: Vec<&'a Field>,
+    insert_fields: Vec<&'a Field>,
+    delete_field: Option<&'a Field>,
 }
 
 impl<'a> Config<'a> {
@@ -256,6 +305,12 @@ impl<'a> Config<'a> {
             quote! { ::sqlx_crud }
         };
 
+        let delete_field = named.iter().find(|f| {
+            f.attrs
+                .iter()
+                .find(|attr| attr.path().is_ident("deleted_at"))
+                .is_some()
+        });
         let db_ty = DbType::new(attrs);
 
         let model_schema_ident =
@@ -264,22 +319,39 @@ impl<'a> Config<'a> {
         let table_name = ident.to_string().to_table_case();
 
         // Search for a field with the #[id] attribute
-        let id_attr = &named
+        let id_field = named
             .iter()
             .find(|f| f.attrs.iter().any(|a| a.path().is_ident("id")))
-            .and_then(|f| f.ident.as_ref());
+            .unwrap_or_else(|| named.iter().next().expect("the first field."));
+        let id_auto_increment = id_field
+            .attrs
+            .iter()
+            .any(|attr| attr.path().is_ident("auto_increment"));
+        // .and_then(|f| f.ident.as_ref());
         // Otherwise default to the first field as the "id" column
-        let id_column_ident = id_attr
-            .unwrap_or_else(|| {
-                named
-                    .iter()
-                    .flat_map(|f| &f.ident)
-                    .next()
-                    .expect("the first field")
-            })
-            .clone();
-
+        let id_column_ident = id_field.clone().ident.unwrap().clone();
         let external_id = attrs.iter().any(|a| a.path().is_ident("external_id"));
+
+        let insert_fields = named
+            .iter()
+            .filter(|f| {
+                let is_not_id =
+                    f.ident.as_ref().unwrap().to_string() != id_column_ident.to_string();
+                let no_ignore_attr = !f.attrs.iter().any(|attr| Self::has_ignore(attr, "insert"));
+                if id_auto_increment {
+                    is_not_id && no_ignore_attr
+                } else {
+                    no_ignore_attr
+                }
+            })
+            .collect();
+        let update_fields = named
+            .iter()
+            .filter(|f| {
+                f.ident.as_ref().unwrap().to_string() != id_column_ident.to_string()
+                    && !f.attrs.iter().any(|attr| Self::has_ignore(attr, "update"))
+            })
+            .collect();
 
         Self {
             ident,
@@ -290,11 +362,31 @@ impl<'a> Config<'a> {
             table_name,
             id_column_ident,
             external_id,
+            insert_fields,
+            update_fields,
+            delete_field,
         }
     }
 
     fn quote_ident(&self, ident: &str) -> String {
         self.db_ty.quote_ident(ident)
+    }
+
+    fn delete_ident(&self) -> Option<String> {
+        self.delete_field
+            .map(|f| f.ident.clone().unwrap().to_string())
+    }
+
+    fn has_ignore(attr: &Attribute, target: &str) -> bool {
+        attr.path().is_ident("ignore_when")
+            && attr
+                .meta
+                .require_list()
+                .expect("ignore_when must be a list, like #[ignore_when(...)]")
+                .parse_args_with(Punctuated::<syn::Path, Token![,]>::parse_terminated)
+                .unwrap()
+                .iter()
+                .any(|m| m.is_ident(target))
     }
 }
 
@@ -309,29 +401,39 @@ enum DbType {
 impl From<&str> for DbType {
     fn from(db_type: &str) -> Self {
         match db_type {
-            "Any" => Self::Any,
-            "Mssql" => Self::Mssql,
-            "MySql" => Self::MySql,
-            "Postgres" => Self::Postgres,
-            "Sqlite" => Self::Sqlite,
+            "Any" | "any" => Self::Any,
+            "Mssql" | "mssql" => Self::Mssql,
+            "MySql" | "mysql" => Self::MySql,
+            "Postgres" | "postgres" => Self::Postgres,
+            "Sqlite" | "sqlite" => Self::Sqlite,
             _ => panic!("unknown #[database] type {}", db_type),
         }
+    }
+}
+impl Into<DbType> for String {
+    fn into(self) -> DbType {
+        DbType::from(self.as_str())
     }
 }
 
 impl DbType {
     fn new(attrs: &[Attribute]) -> Self {
-        let mut db_type = DbType::Sqlite;
-        attrs.iter()
+        attrs
+            .iter()
             .find(|a| a.path().is_ident("database"))
-            .map(|a| a.parse_nested_meta(|m| {
-                if let Some(path) = m.path.get_ident() {
-                    db_type = DbType::from(path.to_string().as_str());
-                }
-                Ok(())
-            }));
-
-        db_type
+            .map(|a| {
+                a.parse_args::<syn::Path>()
+                    .expect("database should be a name like #[database(sqlite)].")
+                    .get_ident()
+                    .unwrap()
+                    .to_string()
+            })
+            .unwrap_or_else(|| {
+                DEFAULT_DB_TYPE
+                    .map(|db_type| db_type.into())
+                    .unwrap_or("sqlite".to_string())
+            })
+            .into()
     }
 
     fn sqlx_db(&self) -> TokenStream2 {
@@ -354,3 +456,8 @@ impl DbType {
         }
     }
 }
+
+#[cfg(feature = "default_mysql")]
+static DEFAULT_DB_TYPE: Option<&str> = Some("mysql");
+#[cfg(not(any(feature = "default_mysql")))]
+static DEFAULT_DB_TYPE: Option<&str> = None;

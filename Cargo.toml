@@ -4,36 +4,39 @@ members = [
   "sqlx-crud-macros",
   "examples/axum",
   "examples/serenity",
+  "examples/mysql-crud",
 ]
 
 [package]
-name = "sqlx-crud"
-version = "0.4.0"
+authors = ["Trey Dempsey <trey.dempsey@gmail.com>"]
+categories = ["database", "asynchronous", "web-programming"]
+description = "Derive macro for SQLx to implement Create, Read, Update, and Delete (CRUD) methods for you."
+documentation = "https://docs.rs/sqlx-crud"
 edition = "2021"
+keywords = ["sqlx", "orm", "crud", "database"]
+license = "MIT"
+name = "sqlx-crud"
 readme = "README.md"
 repository = "https://github.com/treydempsey/sqlx-crud"
-documentation = "https://docs.rs/sqlx-crud"
-description = "Derive macro for SQLx to implement Create, Read, Update, and Delete (CRUD) methods for you."
-license = "MIT"
-keywords = ["sqlx", "orm", "crud", "database"]
-categories = ["database", "asynchronous", "web-programming"]
-authors = ["Trey Dempsey <trey.dempsey@gmail.com>"]
+version = "0.4.0"
 
 [features]
 default = ["runtime-tokio-rustls"]
+default_mysql = ["sqlx-crud-macros/default_mysql"]
 runtime-actix-native-tls = ["sqlx/runtime-actix-native-tls"]
-runtime-async-std-native-tls = ["sqlx/runtime-async-std-native-tls"]
-runtime-tokio-native-tls = ["sqlx/runtime-tokio-native-tls"]
 runtime-actix-rustls = ["sqlx/runtime-actix-rustls"]
+runtime-async-std-native-tls = ["sqlx/runtime-async-std-native-tls"]
 runtime-async-std-rustls = ["sqlx/runtime-async-std-rustls"]
+runtime-tokio-native-tls = ["sqlx/runtime-tokio-native-tls"]
 runtime-tokio-rustls = ["sqlx/runtime-tokio-rustls"]
 
 [dependencies]
 futures = "0.3"
-sqlx = { version = "0.6" }
-sqlx-crud-macros = { version = "0.4", path = "sqlx-crud-macros" }
+sqlx = {version = "0.6"}
+sqlx-crud-macros = {version = "0.4", path = "sqlx-crud-macros"}
 thiserror = "1"
+timed_fields = {git = "https://github.com/dox4/timed_fields.git"}
 
 [dev-dependencies]
-sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "sqlite"] }
+sqlx = {version = "0.6", features = ["runtime-tokio-rustls", "sqlite"]}
 tokio-test = "0"

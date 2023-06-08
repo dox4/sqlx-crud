@@ -158,6 +158,7 @@ pub mod schema;
 pub mod traits;
 
 pub use sqlx_crud_macros::SqlxCrud;
+pub use timed_fields::add_timed_fields;
 pub use traits::{Crud, Schema};
 
 #[macro_export]

@@ -3,7 +3,7 @@ use std::pin::Pin;
 use futures::stream::Stream;
 use futures::stream::TryCollect;
 use futures::Future;
-use futures::{future, TryFutureExt, TryStreamExt};
+use futures::TryStreamExt;
 use sqlx::database::HasArguments;
 use sqlx::{Database, Encode, Executor, FromRow, IntoArguments, Type};
 
@@ -190,16 +190,17 @@ where
     /// use sqlx_crud::{Crud, Schema};
     ///
     /// let user = User { user_id: 1, name: "test".to_string() };
-    /// let user = user.create(&pool).await?;
-    /// assert_eq!("test", user.name);
+    /// let r = user.create(&pool).await?;
+    /// assert_eq!(1, r.rows_affected());
     /// # }}
     /// ```
-    fn create(self, pool: E) -> CrudFut<'e, Self> {
+    fn create(
+        self,
+        pool: E,
+    ) -> CrudFut<'e, <<E as Executor<'e>>::Database as Database>::QueryResult> {
         Box::pin({
             let args = self.insert_args();
-            ::sqlx::query_with::<E::Database, _>(Self::insert_sql(), args)
-                .try_map(|r| Self::from_row(&r))
-                .fetch_one(pool)
+            ::sqlx::query_with::<E::Database, _>(Self::insert_sql(), args).execute(pool)
         })
     }
 
@@ -273,19 +274,20 @@ where
     ///
     ///     // Update the record
     ///     user.name = "Harry".to_string();
-    ///     let user = user.update(&pool).await?;
+    ///     let r = user.update(&pool).await?;
     ///
     ///     // Confirm the name changed
-    ///     assert_eq!("Harry", user.name);
+    ///     assert_eq!(1, r.rows_affected());
     /// }
     /// # }}
     /// ```
-    fn update(self, pool: E) -> CrudFut<'e, Self> {
+    fn update(
+        self,
+        pool: E,
+    ) -> CrudFut<'e, <<E as Executor<'e>>::Database as Database>::QueryResult> {
         Box::pin({
             let args = self.update_args();
-            ::sqlx::query_with::<E::Database, _>(Self::update_by_id_sql(), args)
-                .try_map(|r| Self::from_row(&r))
-                .fetch_one(pool)
+            ::sqlx::query_with::<E::Database, _>(Self::update_by_id_sql(), args).execute(pool)
         })
     }
 
@@ -304,8 +306,11 @@ where
     /// assert!(User::by_id(&pool, 1).await?.is_none());
     /// # }}
     /// ```
-    fn delete(self, pool: E) -> CrudFut<'e, ()> {
+    fn delete(
+        self,
+        pool: E,
+    ) -> CrudFut<'e, <<E as Executor<'e>>::Database as Database>::QueryResult> {
         let query = sqlx::query(<Self as Schema>::delete_by_id_sql()).bind(self.id());
-        Box::pin(query.execute(pool).and_then(|_| future::ok(())))
+        Box::pin(query.execute(pool))
     }
 }

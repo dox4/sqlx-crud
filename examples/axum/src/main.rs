@@ -31,8 +31,13 @@ async fn tasks(Extension(pool): Extension<SqlitePool>) -> Response {
 }
 
 async fn new_task(Extension(pool): Extension<SqlitePool>, Json(new_task): Json<Task>) -> Response {
+    let new_id = new_task.id.clone();
     match new_task.create(&pool).await {
-        Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+        Ok(r) => {
+            assert_eq!(1, r.rows_affected());
+            let r = Task::by_id(&pool, new_id).await.unwrap().unwrap();
+            (StatusCode::OK, Json(r)).into_response()
+        }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR).into_response(),
     }
 }
@@ -53,7 +58,11 @@ async fn update_task(
     if let Ok(Some(_)) = Task::by_id(&pool, task_id).await {
         task.id = task_id;
         match task.update(&pool).await {
-            Ok(r) => (StatusCode::OK, Json(r)).into_response(),
+            Ok(r) => {
+                assert_eq!(1, r.rows_affected());
+                let r = Task::by_id(&pool, task_id).await.unwrap().unwrap();
+                (StatusCode::OK, Json(r)).into_response()
+            }
             Err(_) => (StatusCode::INTERNAL_SERVER_ERROR).into_response(),
         }
     } else {

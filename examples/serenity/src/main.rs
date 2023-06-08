@@ -29,8 +29,8 @@ impl EventHandler for Handler {
 
         assert!(r.is_ok());
         let user = r.unwrap();
-        assert_eq!(1, user.id);
-        assert_eq!("test", user.name);
+        assert_eq!(1, user.rows_affected());
+        // assert_eq!("test", r.name);
 
         let r = User::by_id(&self.db, 1).await;
         assert!(r.is_ok());
@@ -44,9 +44,9 @@ impl EventHandler for Handler {
         user.name = "vogon".to_string();
         let r = user.update(&self.db).await;
         assert!(r.is_ok());
-        let user = r.unwrap();
-        assert_eq!(1, user.id);
-        assert_eq!("vogon", user.name);
+        let r = r.unwrap();
+        assert_eq!(1, r.rows_affected());
+        // assert_eq!("vogon", r.name);
 
         let r = User::by_id(&self.db, 1).await;
         assert!(r.is_ok());
