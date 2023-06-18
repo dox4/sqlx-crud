@@ -5,13 +5,13 @@ use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{
-    parse_macro_input, Attribute, Data, DataStruct, DeriveInput, Field, Fields, FieldsNamed, Ident,
-    LitStr, Token,
+    parse_macro_input, Attribute, Data, DataStruct, DeriveInput, Expr, ExprLit, Field, Fields,
+    FieldsNamed, Ident, LitStr, Token,
 };
 
 #[proc_macro_derive(
     SqlxCrud,
-    attributes(database, external_id, id, ignore_when, auto_increment, deleted_flag,)
+    attributes(database, external_id, id, ignore_when, auto_increment, deleted_with,)
 )]
 pub fn derive(input: TokenStream) -> TokenStream {
     let DeriveInput {
@@ -167,8 +167,35 @@ fn build_update_sql(config: &Config, table_name: &String, id_column: &String) ->
         ),
     }
 }
-fn build_delete_sql(_config: &Config, table_name: &String, id_column: &String) -> String {
-    format!("DELETE FROM {} WHERE {} = ?", table_name, id_column)
+fn build_delete_sql(config: &Config, table_name: &String, id_column: &String) -> String {
+    config.delete_field.map_or_else(
+        || format!("DELETE FROM {} WHERE {} = ?", table_name, id_column),
+        |field| {
+            let ident = field
+                .attrs
+                .iter()
+                .find(|attr| attr.path().is_ident("deleted_with"))
+                .unwrap()
+                .meta
+                .require_name_value()
+                .expect("deleted_with must has a value like `#[deleted_with = \"now()\"]`")
+                .clone()
+                .value;
+            let deleted = match ident {
+                Expr::Lit(ExprLit {
+                    lit: syn::Lit::Str(lit_str),
+                    ..
+                }) => lit_str.value(),
+                _ => panic!("deleted_with must be a string"),
+            };
+            let quoted_deleted_field =
+                config.quote_ident(&field.ident.as_ref().unwrap().to_string());
+            format!(
+                "UPDATE {} SET {} = {} WHERE {} = ? AND {} IS NULL",
+                table_name, quoted_deleted_field, deleted, id_column, quoted_deleted_field
+            )
+        },
+    )
 }
 
 fn build_sqlx_crud_impl(config: &Config) -> TokenStream2 {
@@ -308,7 +335,7 @@ impl<'a> Config<'a> {
         let delete_field = named.iter().find(|f| {
             f.attrs
                 .iter()
-                .find(|attr| attr.path().is_ident("deleted_at"))
+                .find(|attr| attr.path().is_ident("deleted_with"))
                 .is_some()
         });
         let db_ty = DbType::new(attrs);

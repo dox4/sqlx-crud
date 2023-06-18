@@ -45,6 +45,7 @@ async fn db_conn() -> anyhow::Result<Pool<MySql>> {
         "mysql://{}:{}@{}:{}/{}",
         db_user, db_password, db_host, db_port, db_databse
     );
+    println!("db_url: {}", db_url);
     let conn_opts = MySqlConnectOptions::from_str(&db_url)?;
     let pool = MySqlPoolOptions::new()
         .min_connections(5)
